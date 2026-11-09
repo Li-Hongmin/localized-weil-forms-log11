@@ -1,0 +1,57 @@
+name: verify
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: pip install numpy==2.5.4 python-flint==0.9.0 sympy==1.14.0
+      - name: Prepare a fresh working copy
+        run: cp -r verification work
+      - name: Restore the archived original of the translated file(s) from Zenodo (they are covered by the hashes)
+        working-directory: work
+        run: |
+          curl -sSfL -o /tmp/s.zip 'https://zenodo.org/records/24054984/files/supplement.zip?download=1'
+          echo '87d85c8cb1c9c6d004cd9b9944b761190941504f2205b371d33b4758b70cbe0b  /tmp/s.zip' | sha256sum -c -
+          unzip -o -q /tmp/s.zip certificate/README.md -d .
+      - name: SHA-256 check of the certificate bundle
+        working-directory: work/certificate
+        run: sha256sum -c --quiet SHA256SUMS.txt
+      - name: "Frozen endpoint certificate: parameters, pivot counts, strict signs, bundle hashes"
+        working-directory: work
+        env: {OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1'}
+        run: |
+          set -eo pipefail
+          python certificate/verify_frozen_results.py
+      - name: "Interval elimination on the stored Schur matrices"
+        working-directory: work
+        env: {OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1'}
+        run: |
+          set -eo pipefail
+          python verify_retained_core_matrices.py
+      - name: "Prime four-step degree graph (200 cells)"
+        working-directory: work
+        env: {OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1'}
+        run: |
+          set -eo pipefail
+          python certify_log11_prime_four_step_degree.py 256 11
+      - name: "Green-response identities"
+        working-directory: work
+        env: {OPENBLAS_NUM_THREADS: '1', OMP_NUM_THREADS: '1'}
+        run: |
+          set -eo pipefail
+          python verify_green_response_identities.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-output
+          path: work/
+          retention-days: 14
